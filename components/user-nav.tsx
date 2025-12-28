@@ -2,7 +2,8 @@
 
 import { signOut, useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
-import { LogOut, User } from "lucide-react";
+import { LogOut, Settings, User } from "lucide-react";
+import Link from "next/link";
 
 export function UserNav() {
   const { data: session } = useSession();
@@ -12,7 +13,7 @@ export function UserNav() {
   }
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex items-center gap-2">
       <div className="flex items-center gap-2">
         {session.user.image ? (
           <img
@@ -29,13 +30,19 @@ export function UserNav() {
           {session.user.name || session.user.email}
         </span>
       </div>
+      <Button variant="ghost" size="sm" asChild>
+        <Link href="/settings">
+          <Settings className="h-4 w-4" />
+          <span className="hidden sm:inline-block ml-2">Settings</span>
+        </Link>
+      </Button>
       <Button
         variant="ghost"
         size="sm"
         onClick={() => signOut({ callbackUrl: "/login" })}
       >
-        <LogOut className="h-4 w-4 mr-2" />
-        Sign out
+        <LogOut className="h-4 w-4" />
+        <span className="hidden sm:inline-block ml-2">Sign out</span>
       </Button>
     </div>
   );
