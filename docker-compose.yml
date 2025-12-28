@@ -38,6 +38,8 @@ services:
       - DB_POSTGRESDB_DATABASE=pricetracker
       - DB_POSTGRESDB_USER=postgres
       - DB_POSTGRESDB_PASSWORD=postgres
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     ports:
       - "5678:5678"
     volumes:
