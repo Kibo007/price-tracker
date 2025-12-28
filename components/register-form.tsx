@@ -16,23 +16,57 @@ import {
 import { toast } from "sonner";
 import Link from "next/link";
 
-export function LoginForm() {
+export function RegisterForm() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
+    name: "",
     email: "",
     password: "",
+    confirmPassword: "",
   });
 
-  const handleGoogleSignIn = () => {
-    signIn("google", { callbackUrl: "/" });
-  };
-
-  const handleCredentialsSignIn = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (formData.password !== formData.confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast.error("Password must be at least 6 characters");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
+      const response = await fetch("/api/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to create account");
+      }
+
+      if (data.linked) {
+        toast.success("Password added to your Google account!");
+      } else {
+        toast.success("Account created! Signing you in...");
+      }
+
+      // Auto sign in after registration
       const result = await signIn("credentials", {
         email: formData.email,
         password: formData.password,
@@ -40,29 +74,46 @@ export function LoginForm() {
       });
 
       if (result?.error) {
-        toast.error("Invalid email or password");
+        router.push("/login");
       } else {
         router.push("/");
         router.refresh();
       }
-    } catch {
-      toast.error("Something went wrong");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create account"
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleGoogleSignIn = () => {
+    signIn("google", { callbackUrl: "/" });
+  };
+
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl">Welcome to Price Tracker</CardTitle>
+        <CardTitle className="text-2xl">Create an account</CardTitle>
         <CardDescription>
-          Sign in to start tracking product prices and get notified when they
-          drop.
+          Sign up to start tracking product prices.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <form onSubmit={handleCredentialsSignIn} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Name (optional)</Label>
+            <Input
+              id="name"
+              type="text"
+              placeholder="Your name"
+              value={formData.name}
+              onChange={(e) =>
+                setFormData({ ...formData, name: e.target.value })
+              }
+            />
+          </div>
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -81,7 +132,7 @@ export function LoginForm() {
             <Input
               id="password"
               type="password"
-              placeholder="Your password"
+              placeholder="At least 6 characters"
               value={formData.password}
               onChange={(e) =>
                 setFormData({ ...formData, password: e.target.value })
@@ -89,8 +140,21 @@ export function LoginForm() {
               required
             />
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword">Confirm Password</Label>
+            <Input
+              id="confirmPassword"
+              type="password"
+              placeholder="Confirm your password"
+              value={formData.confirmPassword}
+              onChange={(e) =>
+                setFormData({ ...formData, confirmPassword: e.target.value })
+              }
+              required
+            />
+          </div>
           <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "Signing in..." : "Sign in"}
+            {isLoading ? "Creating account..." : "Sign up"}
           </Button>
         </form>
 
@@ -115,9 +179,9 @@ export function LoginForm() {
         </Button>
 
         <p className="text-sm text-center text-muted-foreground">
-          Don&apos;t have an account?{" "}
-          <Link href="/register" className="text-primary hover:underline">
-            Sign up
+          Already have an account?{" "}
+          <Link href="/login" className="text-primary hover:underline">
+            Sign in
           </Link>
         </p>
       </CardContent>
