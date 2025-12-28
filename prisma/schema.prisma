@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TrackedProduct {
+  id           Int       @id @default(autoincrement())
+  url          String
+  productName  String?
+  currentPrice Decimal?  @db.Decimal(10, 2)
+  targetPrice  Decimal   @db.Decimal(10, 2)
+  email        String
+  whatsapp     String?
+  lastChecked  DateTime?
+  createdAt    DateTime  @default(now())
+  isActive     Boolean   @default(true)
+  notified     Boolean   @default(false)
+
+  priceHistory PriceHistory[]
+
+  @@map("tracked_products")
+}
+
+model PriceHistory {
+  id        Int      @id @default(autoincrement())
+  productId Int      @map("product_id")
+  price     Decimal  @db.Decimal(10, 2)
+  checkedAt DateTime @default(now()) @map("checked_at")
+
+  product TrackedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("price_history")
+}
