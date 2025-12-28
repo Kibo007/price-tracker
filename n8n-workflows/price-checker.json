@@ -1,0 +1,263 @@
+{
+  "name": "Price Tracker - Check Prices",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, url, \"productName\", \"currentPrice\", \"targetPrice\", email, whatsapp FROM tracked_products WHERE \"isActive\" = true AND notified = false",
+        "options": {}
+      },
+      "id": "get-products",
+      "name": "Get Active Products",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.9,de;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "id": "fetch-page",
+      "name": "Fetch Product Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get original product data\nconst productData = $('Get Active Products').item.json;\nconst html = $input.item.json.data || '';\n\n// Clean HTML aggressively\nlet cleanHtml = html\n  .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n  .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<noscript[^>]*>[\\s\\S]*?<\\/noscript>/gi, '')\n  .replace(/<svg[^>]*>[\\s\\S]*?<\\/svg>/gi, '')\n  .replace(/<!--[\\s\\S]*?-->/g, '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&[a-z]+;/gi, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nif (cleanHtml.length > 8000) {\n  cleanHtml = cleanHtml.substring(0, 8000);\n}\n\n// Call OpenAI API\nconst apiKey = process.env.OPENAI_API_KEY;\n\nconst prompt = `Extract product info from this e-commerce page and return JSON:\n{\"price\": <number or null>, \"currency\": \"<EUR/USD/GBP or null>\", \"productName\": \"<name or null>\", \"inStock\": <true/false/null>}\n\nCRITICAL RULES:\n1. Extract the MAIN PURCHASE PRICE - the price shown on the buy/add-to-cart button area\n2. IGNORE unit prices (per piece, per unit, per kg, per 100g, etc.)\n3. IGNORE shipping costs\n4. IGNORE crossed-out/was prices - get the current discounted price\n5. If there are multiple prices, choose the prominent checkout price, NOT the lowest\n6. Price must be a number (15.99 not \"15.99\")\n7. Return ONLY valid JSON, no markdown or explanation\n\nText: ${cleanHtml}`;\n\nlet openaiResult;\nlet errorDetail = null;\n\ntry {\n  openaiResult = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.openai.com/v1/chat/completions',\n    headers: {\n      'Content-Type': 'application/json',\n      'Authorization': `Bearer ${apiKey}`\n    },\n    body: {\n      model: 'gpt-4o-mini',\n      max_tokens: 200,\n      messages: [{\n        role: 'user',\n        content: prompt\n      }]\n    },\n    json: true\n  });\n} catch (e) {\n  errorDetail = e.message;\n  return {\n    productId: productData.id,\n    url: productData.url,\n    productName: productData.productName,\n    email: productData.email,\n    targetPrice: parseFloat(productData.targetPrice),\n    currentPrice: null,\n    currency: null,\n    inStock: null,\n    priceFound: false,\n    shouldNotify: false,\n    error: errorDetail,\n    htmlLength: cleanHtml.length\n  };\n}\n\n// Parse OpenAI's JSON response\nlet extracted = { price: null, currency: null, productName: null, inStock: null };\nlet gptText = '';\n\ntry {\n  gptText = openaiResult.choices[0].message.content.trim();\n  // Remove markdown code blocks if present\n  gptText = gptText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  const jsonMatch = gptText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    extracted = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  // Keep defaults\n}\n\nconst targetPrice = parseFloat(productData.targetPrice);\nconst currentPrice = typeof extracted.price === 'number' ? extracted.price : null;\nconst shouldNotify = currentPrice !== null && currentPrice <= targetPrice;\n\nreturn {\n  productId: productData.id,\n  url: productData.url,\n  productName: extracted.productName || productData.productName,\n  email: productData.email,\n  targetPrice: targetPrice,\n  currentPrice: currentPrice,\n  currency: extracted.currency,\n  inStock: extracted.inStock,\n  priceFound: currentPrice !== null,\n  shouldNotify: shouldNotify,\n  gptRaw: gptText\n};"
+      },
+      "id": "gpt-extract",
+      "name": "GPT Extract Price",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-notify",
+              "leftValue": "={{ $json.shouldNotify }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-price",
+      "name": "Price Below Target?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE tracked_products SET \"currentPrice\" = {{ $json.currentPrice }}, \"lastChecked\" = NOW(), notified = true WHERE id = {{ $json.productId }}",
+        "options": {}
+      },
+      "id": "mark-notified",
+      "name": "Mark as Notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Price Tracker <onboarding@resend.dev>\",\n  \"to\": [\"{{ $('GPT Extract Price').item.json.email }}\"],\n  \"subject\": \"Price Alert: {{ $('GPT Extract Price').item.json.productName || 'Your tracked product' }} is now {{ $('GPT Extract Price').item.json.currentPrice }} {{ $('GPT Extract Price').item.json.currency || '' }}!\",\n  \"text\": \"Great news!\\n\\nThe product you're tracking has dropped to your target price.\\n\\nProduct: {{ $('GPT Extract Price').item.json.productName || 'N/A' }}\\nCurrent Price: {{ $('GPT Extract Price').item.json.currentPrice }} {{ $('GPT Extract Price').item.json.currency || '' }}\\nYour Target: {{ $('GPT Extract Price').item.json.targetPrice }}\\nIn Stock: {{ $('GPT Extract Price').item.json.inStock ? 'Yes' : 'Unknown' }}\\n\\nView the product: {{ $('GPT Extract Price').item.json.url }}\\n\\n---\\nPrice Tracker\"\n}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Email via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, -100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE tracked_products SET \"currentPrice\" = {{ $('GPT Extract Price').item.json.currentPrice !== null ? $('GPT Extract Price').item.json.currentPrice : 'NULL' }}, \"lastChecked\" = NOW() WHERE id = {{ $('GPT Extract Price').item.json.productId }}",
+        "options": {}
+      },
+      "id": "update-price",
+      "name": "Update Price Only",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO price_history (product_id, price, checked_at) VALUES ({{ $('GPT Extract Price').item.json.productId }}, {{ $('GPT Extract Price').item.json.currentPrice !== null ? $('GPT Extract Price').item.json.currentPrice : 'NULL' }}, NOW())",
+        "options": {}
+      },
+      "id": "log-price-history",
+      "name": "Log Price History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1320, 100]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Active Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Products": {
+      "main": [
+        [
+          {
+            "node": "Fetch Product Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Product Page": {
+      "main": [
+        [
+          {
+            "node": "GPT Extract Price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Extract Price": {
+      "main": [
+        [
+          {
+            "node": "Price Below Target?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Price Below Target?": {
+      "main": [
+        [
+          {
+            "node": "Mark as Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Price Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Notified": {
+      "main": [
+        [
+          {
+            "node": "Send Email via Resend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Price Only": {
+      "main": [
+        [
+          {
+            "node": "Log Price History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
