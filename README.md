@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Price Tracker
 
-## Getting Started
+Track product prices and get notified when they drop to your target price.
 
-First, run the development server:
+## Tech Stack
+
+- **Frontend**: Next.js 14, React, Tailwind CSS, shadcn/ui
+- **Database**: PostgreSQL + Prisma ORM
+- **Automation**: n8n (self-hosted)
+- **AI**: OpenAI GPT-4o-mini for price extraction
+
+## Quick Start
+
+### 1. Start Docker Containers
+
+```bash
+docker compose up -d
+```
+
+This starts:
+- PostgreSQL on port 5432
+- n8n on port 5678
+
+### 2. Set Up the Database
+
+```bash
+npx prisma db push
+```
+
+### 3. Run the Next.js App
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Visit http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 4. Configure n8n
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Open http://localhost:5678
+2. Create an account
+3. Set environment variable `OPENAI_API_KEY` in your n8n container
+4. Go to **Credentials** and add:
+   - **PostgreSQL**:
+     - Host: `postgres` (or `localhost` if connecting from host)
+     - Port: `5432`
+     - Database: `pricetracker`
+     - User: `postgres`
+     - Password: `postgres`
+   - **HTTP Header Auth** (for Resend email):
+     - Name: `Authorization`
+     - Value: `Bearer <your-resend-api-key>`
+5. Import the workflow from `n8n-workflows/price-checker.json`
+6. Update credential references in the workflow
+7. Activate the workflow
 
-## Learn More
+## Project Structure
 
-To learn more about Next.js, take a look at the following resources:
+```
+price-tracker/
+├── docker-compose.yml    # PostgreSQL + n8n containers
+├── n8n-workflows/        # Exportable n8n workflows
+├── app/                  # Next.js app router pages & API
+├── components/           # React components
+├── lib/                  # Utilities (Prisma client)
+└── prisma/               # Database schema
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## How It Works
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. User adds a product URL with target price via the web UI
+2. n8n workflow runs every hour
+3. For each tracked product:
+   - Fetches the product page
+   - Uses GPT-4o-mini to extract the current price (ignoring unit prices)
+   - If price <= target, sends email notification via Resend
+   - Logs price history
 
-## Deploy on Vercel
+## Environment Variables
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Create `.env`:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/pricetracker"
+```
+
+For n8n, set:
+```env
+OPENAI_API_KEY="your-openai-api-key"
+```
+
+## Supported Sites
+
+The AI-powered price extractor works with most e-commerce sites:
+- Amazon (extracts main price, ignores unit prices)
+- eBay
+- Most other sites with visible prices
+
+The GPT prompt specifically targets the main purchase price and ignores per-unit, per-kg, or shipping prices.
