@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
 
 export async function GET() {
   try {
+    const user = await getAuthenticatedUser();
+
+    if (!user) {
+      return unauthorizedResponse();
+    }
+
     const products = await prisma.trackedProduct.findMany({
+      where: { userId: user.id },
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json(products);
@@ -18,6 +26,12 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const user = await getAuthenticatedUser();
+
+    if (!user) {
+      return unauthorizedResponse();
+    }
+
     const body = await request.json();
     const { url, email, targetPrice, whatsapp } = body;
 
@@ -59,6 +73,7 @@ export async function POST(request: NextRequest) {
         email,
         targetPrice: price,
         whatsapp: whatsapp || null,
+        userId: user.id,
       },
     });
 

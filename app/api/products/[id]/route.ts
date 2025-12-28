@@ -1,11 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
+
+async function getProductIfOwned(productId: number, userId: string) {
+  const product = await prisma.trackedProduct.findFirst({
+    where: {
+      id: productId,
+      userId: userId,
+    },
+  });
+  return product;
+}
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await getAuthenticatedUser();
+
+    if (!user) {
+      return unauthorizedResponse();
+    }
+
     const { id } = await params;
     const productId = parseInt(id);
 
@@ -13,8 +30,11 @@ export async function GET(
       return NextResponse.json({ error: "Invalid product ID" }, { status: 400 });
     }
 
-    const product = await prisma.trackedProduct.findUnique({
-      where: { id: productId },
+    const product = await prisma.trackedProduct.findFirst({
+      where: {
+        id: productId,
+        userId: user.id,
+      },
       include: { priceHistory: { orderBy: { checkedAt: "desc" }, take: 10 } },
     });
 
@@ -37,11 +57,23 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await getAuthenticatedUser();
+
+    if (!user) {
+      return unauthorizedResponse();
+    }
+
     const { id } = await params;
     const productId = parseInt(id);
 
     if (isNaN(productId)) {
       return NextResponse.json({ error: "Invalid product ID" }, { status: 400 });
+    }
+
+    const product = await getProductIfOwned(productId, user.id);
+
+    if (!product) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
     await prisma.trackedProduct.delete({
@@ -63,6 +95,12 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await getAuthenticatedUser();
+
+    if (!user) {
+      return unauthorizedResponse();
+    }
+
     const { id } = await params;
     const productId = parseInt(id);
     const body = await request.json();
@@ -71,9 +109,18 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid product ID" }, { status: 400 });
     }
 
+    const existingProduct = await getProductIfOwned(productId, user.id);
+
+    if (!existingProduct) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+
+    // Prevent changing userId
+    const { userId: _, ...updateData } = body;
+
     const product = await prisma.trackedProduct.update({
       where: { id: productId },
-      data: body,
+      data: updateData,
     });
 
     return NextResponse.json(product);
