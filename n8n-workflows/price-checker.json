@@ -7,16 +7,30 @@
           "interval": [
             {
               "field": "hours",
-              "hoursInterval": 1
+              "hoursInterval": 24
             }
           ]
         }
       },
       "id": "schedule-trigger",
-      "name": "Schedule Trigger",
+      "name": "Schedule Trigger (24h)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0]
+      "position": [0, -100]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "check-price",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook (New Product)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 100],
+      "webhookId": "check-price-webhook"
     },
     {
       "parameters": {
@@ -33,32 +47,15 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $json.url }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "User-Agent",
-              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            },
-            {
-              "name": "Accept-Language",
-              "value": "en-US,en;q=0.9,de;q=0.8"
-            }
-          ]
-        },
+        "url": "=http://api.scraperapi.com?api_key={{ $env.SCRAPER_API_KEY }}&url={{ encodeURIComponent($json.url) }}&country_code=de&render=true&device_type=desktop",
+        "sendHeaders": false,
         "options": {
           "response": {
             "response": {
               "responseFormat": "text"
             }
           },
-          "batching": {
-            "batch": {
-              "batchSize": 1,
-              "batchInterval": 2000
-            }
-          }
+          "timeout": 90000
         }
       },
       "id": "fetch-page",
@@ -69,13 +66,49 @@
     },
     {
       "parameters": {
-        "jsCode": "// Get original product data\nconst productData = $('Get Active Products').item.json;\nconst html = $input.item.json.data || '';\n\n// Clean HTML aggressively\nlet cleanHtml = html\n  .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n  .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<noscript[^>]*>[\\s\\S]*?<\\/noscript>/gi, '')\n  .replace(/<svg[^>]*>[\\s\\S]*?<\\/svg>/gi, '')\n  .replace(/<!--[\\s\\S]*?-->/g, '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&[a-z]+;/gi, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nif (cleanHtml.length > 8000) {\n  cleanHtml = cleanHtml.substring(0, 8000);\n}\n\n// Call OpenAI API\nconst apiKey = $env.OPENAI_API_KEY;\n\nconst prompt = `Extract product info from this e-commerce page and return JSON:\n{\"price\": <number or null>, \"currency\": \"<EUR/USD/GBP or null>\", \"productName\": \"<name or null>\", \"inStock\": <true/false/null>}\n\nCRITICAL RULES:\n1. Extract the MAIN PURCHASE PRICE - the price shown on the buy/add-to-cart button area\n2. IGNORE unit prices (per piece, per unit, per kg, per 100g, etc.)\n3. IGNORE shipping costs\n4. IGNORE crossed-out/was prices - get the current discounted price\n5. If there are multiple prices, choose the prominent checkout price, NOT the lowest\n6. Price must be a number (15.99 not \"15.99\")\n7. Return ONLY valid JSON, no markdown or explanation\n\nText: ${cleanHtml}`;\n\nlet openaiResult;\nlet errorDetail = null;\n\ntry {\n  openaiResult = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.openai.com/v1/chat/completions',\n    headers: {\n      'Content-Type': 'application/json',\n      'Authorization': `Bearer ${apiKey}`\n    },\n    body: {\n      model: 'gpt-4o-mini',\n      max_tokens: 200,\n      messages: [{\n        role: 'user',\n        content: prompt\n      }]\n    },\n    json: true\n  });\n} catch (e) {\n  errorDetail = e.message;\n  return {\n    productId: productData.id,\n    url: productData.url,\n    productName: productData.productName,\n    email: productData.email,\n    targetPrice: parseFloat(productData.targetPrice),\n    currentPrice: null,\n    currency: null,\n    inStock: null,\n    priceFound: false,\n    shouldNotify: false,\n    error: errorDetail,\n    htmlLength: cleanHtml.length\n  };\n}\n\n// Parse OpenAI's JSON response\nlet extracted = { price: null, currency: null, productName: null, inStock: null };\nlet gptText = '';\n\ntry {\n  gptText = openaiResult.choices[0].message.content.trim();\n  // Remove markdown code blocks if present\n  gptText = gptText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  const jsonMatch = gptText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    extracted = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  // Keep defaults\n}\n\nconst targetPrice = parseFloat(productData.targetPrice);\nconst currentPrice = typeof extracted.price === 'number' ? extracted.price : null;\nconst shouldNotify = currentPrice !== null && currentPrice <= targetPrice;\n\nreturn {\n  productId: productData.id,\n  url: productData.url,\n  productName: extracted.productName || productData.productName,\n  email: productData.email,\n  targetPrice: targetPrice,\n  currentPrice: currentPrice,\n  currency: extracted.currency,\n  inStock: extracted.inStock,\n  priceFound: currentPrice !== null,\n  shouldNotify: shouldNotify,\n  gptRaw: gptText\n};"
+        "jsCode": "const productData = $('Get Active Products').item.json;\nconst html = $input.item.json.data || '';\n\n// For Amazon: find the FIRST price that appears after 'corePrice' or 'a-price' class\n// This is typically the main buybox price\nlet extractedPrice = null;\n\n// Method 1: Look for a-offscreen price (hidden accessible price, usually accurate)\nconst offscreenPrices = html.match(/a-offscreen[\"'][^>]*>([€$£])?\\s*([\\d,.]+)/gi);\nif (offscreenPrices && offscreenPrices.length > 0) {\n  // Get first offscreen price (usually the main product price)\n  const firstPrice = offscreenPrices[0];\n  const priceNum = firstPrice.match(/([\\d]+[,.]\\d{2})/);\n  if (priceNum) {\n    extractedPrice = parseFloat(priceNum[1].replace(',', '.'));\n  }\n}\n\n// Method 2: Look for price in corePrice section\nif (!extractedPrice) {\n  const corePriceSection = html.match(/corePrice[\\s\\S]{0,500}?([\\d]+[,.]\\d{2})\\s*€/i);\n  if (corePriceSection) {\n    extractedPrice = parseFloat(corePriceSection[1].replace(',', '.'));\n  }\n}\n\n// Method 3: Look for € followed by price\nif (!extractedPrice) {\n  const euroPrice = html.match(/€\\s*([\\d]+[,.]\\d{2})/i);\n  if (euroPrice) {\n    extractedPrice = parseFloat(euroPrice[1].replace(',', '.'));\n  }\n}\n\n// Clean HTML for GPT (cut before 'Featured items' or 'Customers also')\nlet cleanHtml = html;\nconst featuredIndex = html.indexOf('Featured items you may like');\nconst customersIndex = html.indexOf('Customers also');\nconst similarIndex = html.indexOf('Similar items');\n\nlet cutIndex = html.length;\nif (featuredIndex > 5000 && featuredIndex < cutIndex) cutIndex = featuredIndex;\nif (customersIndex > 5000 && customersIndex < cutIndex) cutIndex = customersIndex;\nif (similarIndex > 5000 && similarIndex < cutIndex) cutIndex = similarIndex;\n\ncleanHtml = html.substring(0, cutIndex)\n  .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n  .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&[a-z]+;/gi, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nif (cleanHtml.length > 8000) {\n  cleanHtml = cleanHtml.substring(0, 8000);\n}\n\nlet priceHint = '';\nif (extractedPrice) {\n  priceHint = `IMPORTANT: The main product price is ${extractedPrice} EUR. Use this exact price.\\n\\n`;\n}\n\nconst prompt = `${priceHint}Extract product info and return JSON only:\n{\"price\": ${extractedPrice || '<number>'}, \"currency\": \"EUR\", \"productName\": \"<name>\", \"inStock\": <true/false/null>}\n\nRules: Use the price shown above if provided. Return ONLY valid JSON.\n\nText: ${cleanHtml}`;\n\nreturn {\n  productData: productData,\n  prompt: prompt,\n  extractedPrice: extractedPrice\n};"
       },
-      "id": "gpt-extract",
-      "name": "GPT Extract Price",
+      "id": "prepare-prompt",
+      "name": "Prepare GPT Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"max_tokens\": 200,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "openai-request",
+      "name": "Call OpenAI API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const productData = $('Prepare GPT Prompt').item.json.productData;\nconst extractedPrice = $('Prepare GPT Prompt').item.json.extractedPrice;\nconst openaiResponse = $input.item.json;\n\nlet extracted = { price: null, currency: 'EUR', productName: null, inStock: null };\n\ntry {\n  let gptText = openaiResponse.choices[0].message.content.trim();\n  gptText = gptText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  const jsonMatch = gptText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    extracted = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {}\n\n// Prefer our extracted price if GPT gives something different\nlet currentPrice = typeof extracted.price === 'number' ? extracted.price : null;\nif (extractedPrice && currentPrice !== extractedPrice) {\n  currentPrice = extractedPrice;\n}\n\nconst targetPrice = parseFloat(productData.targetPrice);\nconst shouldNotify = currentPrice !== null && currentPrice <= targetPrice;\n\nreturn {\n  productId: productData.id,\n  url: productData.url,\n  productName: extracted.productName || productData.productName,\n  email: productData.email,\n  targetPrice: targetPrice,\n  currentPrice: currentPrice,\n  currency: extracted.currency || 'EUR',\n  inStock: extracted.inStock,\n  priceFound: currentPrice !== null,\n  shouldNotify: shouldNotify\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse GPT Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 0]
     },
     {
       "parameters": {
@@ -104,7 +137,7 @@
       "name": "Price Below Target?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [880, 0]
+      "position": [1320, 0]
     },
     {
       "parameters": {
@@ -116,7 +149,7 @@
       "name": "Mark as Notified",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1100, -100]
+      "position": [1540, -100]
     },
     {
       "parameters": {
@@ -135,42 +168,53 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"from\": \"Price Tracker <onboarding@resend.dev>\",\n  \"to\": [\"{{ $('GPT Extract Price').item.json.email }}\"],\n  \"subject\": \"Price Alert: {{ $('GPT Extract Price').item.json.productName || 'Your tracked product' }} is now {{ $('GPT Extract Price').item.json.currentPrice }} {{ $('GPT Extract Price').item.json.currency || '' }}!\",\n  \"text\": \"Great news!\\n\\nThe product you're tracking has dropped to your target price.\\n\\nProduct: {{ $('GPT Extract Price').item.json.productName || 'N/A' }}\\nCurrent Price: {{ $('GPT Extract Price').item.json.currentPrice }} {{ $('GPT Extract Price').item.json.currency || '' }}\\nYour Target: {{ $('GPT Extract Price').item.json.targetPrice }}\\nIn Stock: {{ $('GPT Extract Price').item.json.inStock ? 'Yes' : 'Unknown' }}\\n\\nView the product: {{ $('GPT Extract Price').item.json.url }}\\n\\n---\\nPrice Tracker\"\n}",
+        "jsonBody": "={\n  \"from\": \"Price Tracker <onboarding@resend.dev>\",\n  \"to\": [\"{{ $('Parse GPT Response').item.json.email }}\"],\n  \"subject\": \"Price Alert: {{ $('Parse GPT Response').item.json.productName || 'Your tracked product' }} is now {{ $('Parse GPT Response').item.json.currentPrice }} {{ $('Parse GPT Response').item.json.currency || '' }}!\",\n  \"text\": \"Great news!\\n\\nThe product you're tracking has dropped to your target price.\\n\\nProduct: {{ $('Parse GPT Response').item.json.productName || 'N/A' }}\\nCurrent Price: {{ $('Parse GPT Response').item.json.currentPrice }} {{ $('Parse GPT Response').item.json.currency || '' }}\\nYour Target: {{ $('Parse GPT Response').item.json.targetPrice }}\\nIn Stock: {{ $('Parse GPT Response').item.json.inStock ? 'Yes' : 'Unknown' }}\\n\\nView the product: {{ $('Parse GPT Response').item.json.url }}\\n\\n---\\nPrice Tracker\"\n}",
         "options": {}
       },
       "id": "send-email",
       "name": "Send Email via Resend",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1320, -100]
+      "position": [1760, -100]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=UPDATE tracked_products SET \"currentPrice\" = {{ $('GPT Extract Price').item.json.currentPrice !== null ? $('GPT Extract Price').item.json.currentPrice : 'NULL' }}, \"lastChecked\" = NOW() WHERE id = {{ $('GPT Extract Price').item.json.productId }}",
+        "query": "=UPDATE tracked_products SET \"currentPrice\" = {{ $json.currentPrice !== null ? $json.currentPrice : 'NULL' }}, \"lastChecked\" = NOW() WHERE id = {{ $json.productId }}",
         "options": {}
       },
       "id": "update-price",
       "name": "Update Price Only",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1100, 100]
+      "position": [1540, 100]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=INSERT INTO price_history (product_id, price, checked_at) VALUES ({{ $('GPT Extract Price').item.json.productId }}, {{ $('GPT Extract Price').item.json.currentPrice !== null ? $('GPT Extract Price').item.json.currentPrice : 'NULL' }}, NOW())",
+        "query": "=INSERT INTO price_history (product_id, price, checked_at) VALUES ({{ $json.productId }}, {{ $json.currentPrice !== null ? $json.currentPrice : 'NULL' }}, NOW())",
         "options": {}
       },
       "id": "log-price-history",
       "name": "Log Price History",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1320, 100]
+      "position": [1760, 100]
     }
   ],
   "connections": {
-    "Schedule Trigger": {
+    "Schedule Trigger (24h)": {
+      "main": [
+        [
+          {
+            "node": "Get Active Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (New Product)": {
       "main": [
         [
           {
@@ -196,14 +240,36 @@
       "main": [
         [
           {
-            "node": "GPT Extract Price",
+            "node": "Prepare GPT Prompt",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "GPT Extract Price": {
+    "Prepare GPT Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call OpenAI API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call OpenAI API": {
+      "main": [
+        [
+          {
+            "node": "Parse GPT Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse GPT Response": {
       "main": [
         [
           {

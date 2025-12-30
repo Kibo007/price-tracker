@@ -77,6 +77,20 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Trigger immediate price check via n8n webhook
+    try {
+      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
+      if (n8nWebhookUrl) {
+        fetch(n8nWebhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productId: product.id }),
+        }).catch(() => {}); // Fire and forget
+      }
+    } catch {
+      // Don't fail the request if webhook fails
+    }
+
     return NextResponse.json(product, { status: 201 });
   } catch (error) {
     console.error("Failed to create product:", error);
