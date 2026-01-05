@@ -15,7 +15,7 @@ export default async function LoginPage() {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-accent/10 via-transparent to-transparent pointer-events-none" />
       <div className="absolute top-1/4 -left-20 h-72 w-72 rounded-full bg-primary/5 blur-3xl" />
       <div className="absolute bottom-1/4 -right-20 h-72 w-72 rounded-full bg-accent/5 blur-3xl" />
-      <div className="relative z-10">
+      <div className="relative z-10 w-full max-w-[600px]">
         <LoginForm />
       </div>
     </div>

@@ -53,7 +53,7 @@ export function LoginForm() {
   };
 
   return (
-    <Card className="w-full max-w-md overflow-hidden">
+    <Card className="w-full max-w-[600px] overflow-hidden">
       <div className="h-1.5 bg-gradient-to-r from-primary via-accent to-primary" />
       <CardHeader className="text-center pb-2">
         <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg shadow-primary/25">

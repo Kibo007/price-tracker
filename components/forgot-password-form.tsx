@@ -50,7 +50,7 @@ export function ForgotPasswordForm() {
 
   if (submitted) {
     return (
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-[600px]">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Check your email</CardTitle>
           <CardDescription>
@@ -83,7 +83,7 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <Card className="w-full max-w-md">
+    <Card className="w-full max-w-[600px]">
       <CardHeader className="text-center">
         <CardTitle className="text-2xl">Forgot your password?</CardTitle>
         <CardDescription>

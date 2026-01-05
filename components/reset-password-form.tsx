@@ -30,7 +30,7 @@ export function ResetPasswordForm() {
 
   if (!token || !email) {
     return (
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-[600px]">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Invalid Reset Link</CardTitle>
           <CardDescription>
@@ -96,7 +96,7 @@ export function ResetPasswordForm() {
 
   if (success) {
     return (
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-[600px]">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
             <CheckCircle className="h-12 w-12 text-green-500" />
@@ -117,7 +117,7 @@ export function ResetPasswordForm() {
   }
 
   return (
-    <Card className="w-full max-w-md">
+    <Card className="w-full max-w-[600px]">
       <CardHeader className="text-center">
         <CardTitle className="text-2xl">Reset your password</CardTitle>
         <CardDescription>Enter your new password below.</CardDescription>
