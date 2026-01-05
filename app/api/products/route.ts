@@ -33,11 +33,20 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { url, email, targetPrice, whatsapp } = body;
+    const { url, targetPrice, whatsapp } = body;
 
-    if (!url || !email || targetPrice === undefined) {
+    if (!url || targetPrice === undefined) {
       return NextResponse.json(
-        { error: "Missing required fields: url, email, targetPrice" },
+        { error: "Missing required fields: url, targetPrice" },
+        { status: 400 }
+      );
+    }
+
+    // Use the user's signup email
+    const email = user.email;
+    if (!email) {
+      return NextResponse.json(
+        { error: "User email not found" },
         { status: 400 }
       );
     }
@@ -47,15 +56,6 @@ export async function POST(request: NextRequest) {
       new URL(url);
     } catch {
       return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
-    }
-
-    // Validate email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { error: "Invalid email address" },
-        { status: 400 }
-      );
     }
 
     // Validate target price
@@ -78,17 +78,18 @@ export async function POST(request: NextRequest) {
     });
 
     // Trigger immediate price check via n8n webhook
-    try {
-      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-      if (n8nWebhookUrl) {
-        fetch(n8nWebhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId: product.id }),
-        }).catch(() => {}); // Fire and forget
-      }
-    } catch {
-      // Don't fail the request if webhook fails
+    const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
+    if (n8nWebhookUrl) {
+      console.log(`Triggering n8n webhook for product ${product.id}: ${n8nWebhookUrl}`);
+      fetch(n8nWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: product.id }),
+      })
+        .then((res) => console.log(`n8n webhook response: ${res.status}`))
+        .catch((err) => console.error(`n8n webhook failed:`, err));
+    } else {
+      console.warn('N8N_WEBHOOK_URL not configured - skipping price check trigger');
     }
 
     return NextResponse.json(product, { status: 201 });
