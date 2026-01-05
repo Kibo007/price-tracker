@@ -147,7 +147,7 @@ export function ProductList({ refreshTrigger }: ProductListProps) {
                     href={product.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline"
+                    className="text-primary hover:text-primary/80 hover:underline font-medium transition-colors"
                   >
                     {product.productName || truncateUrl(product.url)}
                   </a>
@@ -156,7 +156,7 @@ export function ProductList({ refreshTrigger }: ProductListProps) {
                 <TableCell>{formatPrice(product.targetPrice)}</TableCell>
                 <TableCell>
                   {product.notified ? (
-                    <Badge variant="default">Notified</Badge>
+                    <Badge variant="success">Notified</Badge>
                   ) : product.isActive ? (
                     <Badge variant="secondary">Tracking</Badge>
                   ) : (
@@ -170,9 +170,15 @@ export function ProductList({ refreshTrigger }: ProductListProps) {
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     onClick={() => handleDelete(product.id)}
                   >
-                    Remove
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    </svg>
+                    <span className="sr-only">Remove</span>
                   </Button>
                 </TableCell>
               </TableRow>
